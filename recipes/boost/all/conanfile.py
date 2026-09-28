@@ -1075,7 +1075,7 @@ class BoostConan(ConanFile):
     def _boost_build_dir(self):
         return os.path.join(self.source_folder, "tools", "build")
 
-    def _build_bcp(self):
+    def _build_bcp(self, b2_env=None):
         folder = os.path.join(self.source_folder, "tools", "bcp")
         with chdir(self, folder):
             njobs = build_jobs(self)
@@ -1083,7 +1083,44 @@ class BoostConan(ConanFile):
             command = f"{self._b2_exe} {njobs} --abbreviate-paths toolset={self._toolset}"
             command += f" -d{self.options.debug_level}"
             self.output.warning(command)
-            self.run(command)
+            self.run(command, env=b2_env)
+
+    def _prepare_b2_environment(self):
+        if self._toolset != "clang-win":
+            return None
+
+        b2_bin = os.path.join(self.dependencies.build["b2"].package_folder, "bin")
+        b2_tools_candidates = [
+            os.path.join(b2_bin, ".b2", "tools"),
+            os.path.join(b2_bin, "b2_src", "src", "tools"),
+        ]
+        b2_tools = next(
+            (path for path in b2_tools_candidates if os.path.isfile(os.path.join(path, "clang-win.jam"))),
+            None,
+        )
+        if not b2_tools:
+            raise ConanException(
+                "Unable to find B2 clang-win toolset. Searched: "
+                + ", ".join(os.path.join(path, "clang-win.jam") for path in b2_tools_candidates)
+            )
+
+        override_folder = os.path.join(self.build_folder, "b2-toolset-overrides")
+        override_tools = os.path.join(override_folder, "tools")
+        mkdir(self, override_tools)
+        copy(self, "clang-win.jam", src=b2_tools, dst=override_tools)
+        override_jam = os.path.join(override_tools, "clang-win.jam")
+        replace_in_file(
+            self,
+            override_jam,
+            "-latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath",
+            "-latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath",
+            strict=True,
+        )
+
+        env = VirtualBuildEnv(self).environment()
+        env.prepend_path("BOOST_BUILD_PATH", override_tools)
+        env.vars(self).save_script("conanbuild_boost_b2")
+        return "conanbuild_boost_b2"
 
     def _run_bcp(self):
         with chdir(self, self.source_folder):
@@ -1152,9 +1189,10 @@ class BoostConan(ConanFile):
             return
 
         self._clean()
+        b2_env = self._prepare_b2_environment()
 
         if self._use_bcp:
-            self._build_bcp()
+            self._build_bcp(b2_env)
             self._run_bcp()
 
         self._create_user_config_jam(self._boost_build_dir)
@@ -1172,7 +1210,7 @@ class BoostConan(ConanFile):
         with chdir(self, sources):
             # To show the libraries *1
             # self.run("%s --show-libraries" % b2_exe)
-            self.run(full_command)
+            self.run(full_command, env=b2_env)
 
     @property
     def _b2_os(self):
