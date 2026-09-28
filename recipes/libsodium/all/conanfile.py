@@ -38,6 +38,11 @@ class LibsodiumConan(ConanFile):
         return self.settings.os == "Windows" and self.settings.compiler == "gcc"
 
     @property
+    def _is_clang_cl(self):
+        return self.settings.os == "Windows" and self.settings.compiler == "clang" and \
+               self.settings.compiler.get_safe("runtime")
+
+    @property
     def _settings_build(self):
         return getattr(self, "settings_build", self.settings)
 
@@ -86,6 +91,10 @@ class LibsodiumConan(ConanFile):
             yes_no = lambda v: "yes" if v else "no"
             tc.configure_args.append("--enable-soname-versions={}".format(yes_no(self.options.use_soname)))
             tc.configure_args.append("--enable-pie={}".format(yes_no(self.options.PIE)))
+            if self._is_clang_cl:
+                tc.configure_args.append("ac_cv_func_getpid=no")
+                if not self.options.shared:
+                    tc.extra_cflags.append("-DSODIUM_STATIC")
             if self._is_mingw:
                 tc.extra_ldflags.append("-lssp")
             if self.settings.os == "Emscripten":
@@ -93,7 +102,16 @@ class LibsodiumConan(ConanFile):
                 tc.configure_args.append("--without-pthreads")
                 tc.configure_args.append("--disable-ssp")
                 tc.configure_args.append("--disable-asm")
-            tc.generate()
+            tc_env = tc.environment()
+            if self._settings_build.os == "Windows":
+                compilers = self.conf.get("tools.build:compiler_executables", default={}, check_type=dict)
+                for language in ("c", "cpp"):
+                    compiler = compilers.get(language)
+                    if compiler and " " in compiler:
+                        compiler_dir, compiler_name = os.path.split(compiler)
+                        tc_env.prepend_path("PATH", compiler_dir)
+                        tc_env.define("CC" if language == "c" else "CXX", compiler_name)
+            tc.generate(tc_env)
 
     @property
     def _msvc_sln_folder(self):
