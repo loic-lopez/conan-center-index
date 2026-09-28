@@ -509,6 +509,9 @@ class OpenSSLConan(ConanFile):
         with chdir(self, self.source_folder):
             args = " ".join(self._configure_args)
 
+            if self._is_clang_cl:
+                save(self, "ossl_static.pdb", "")
+
             if self._use_nmake:
                 self._replace_runtime_in_file(os.path.join("Configurations", "10-main.conf"))
 
